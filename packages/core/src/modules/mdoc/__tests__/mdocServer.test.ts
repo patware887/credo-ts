@@ -112,6 +112,33 @@ describe('mdoc service test', () => {
     expect(isValid).toBeTruthy()
   })
 
+  describe('signed default', () => {
+    const signWithValidFrom = (validFrom: Date) =>
+      Mdoc.sign(agentContext, {
+        docType: 'org.iso.18013.5.1.mDL',
+        holderKey: PublicJwk.fromPublicJwk(holderKey.publicJwk),
+        namespaces: { hello: { world: 'world' } },
+        issuerCertificate: certificate,
+        validityInfo: { validFrom, validUntil: nextDay },
+      })
+
+    test('is validFrom when validFrom is in the past within the validity skew', async () => {
+      const mdoc = await signWithValidFrom(new Date(Date.now() - 1000))
+
+      expect(mdoc.validityInfo.signed).toEqual(mdoc.validityInfo.validFrom)
+      const { isValid } = await mdoc.verify(agentContext, {
+        trustedCertificates: [{ issuance: [certificate.toString('base64')] }],
+      })
+      expect(isValid).toBeTruthy()
+    })
+
+    test('still fails when validFrom is further in the past than the validity skew', async () => {
+      await expect(signWithValidFrom(new Date(Date.now() - 60 * 60 * 1000))).rejects.toThrow(
+        'must be equal to or later than signed'
+      )
+    })
+  })
+
   test('can create and verify mdoc with status', async () => {
     const statusListUri = 'https://example.org/token-status-list/8'
     const { statusList } = await tokenStatusList.createTokenStatusList({

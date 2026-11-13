@@ -32,6 +32,7 @@ export interface InitConfig {
    * - W3C VCDM 1.1 JSON-LD
    * - W3C VCDM 2.0 Data Integrity Proofs, including the proof `created` / `expires` values
    * - mDOC device responses, including CWT status and identifier list checks
+   * - mDOC signing, where `signed` defaults to a `validFrom` that is at most this many seconds in the past
    *
    * It does not cover:
    * - AnonCreds, as AnonCreds credentials have no validity period and non-revocation intervals are checked against

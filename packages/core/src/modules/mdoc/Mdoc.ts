@@ -149,12 +149,19 @@ export class Mdoc {
     }
 
     const now = new Date()
+    const { validFrom } = validityInfo
+    // ISO 18013-5 requires validFrom >= signed, and a validFrom created just before calling sign is before now
+    const isValidFromWithinSkew =
+      validFrom !== undefined &&
+      validFrom < now &&
+      now.getTime() - validFrom.getTime() <= agentContext.config.validitySkewSeconds * 1000
+    const signed = validityInfo.signed ?? (isValidFromWithinSkew ? validFrom : now)
     const issuerSigned = await issuer.sign({
       digestAlgorithm: 'SHA-256',
       validityInfo: {
         ...validityInfo,
-        signed: validityInfo.signed ?? now,
-        validFrom: validityInfo.validFrom ?? now,
+        signed,
+        validFrom: validFrom ?? now,
       },
       algorithm: SignatureAlgorithm[alg],
       certificates: Array.isArray(issuerCertificate)
