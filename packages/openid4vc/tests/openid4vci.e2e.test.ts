@@ -312,6 +312,24 @@ pUGCFdfNLQIgHGSa5u5ZqUtCrnMiaEageO71rjzBlov0YUH4+6ELioY=
     warnSpy.mockRestore()
   })
 
+  it('returns 400 when the request body can not be parsed', async () => {
+    const { issuerId } = await issuer.agent.openid4vc.issuer.createIssuer({
+      credentialConfigurationsSupported: { universityDegree: universityDegreeCredentialConfigurationSupported },
+    })
+
+    const response = await fetch(`${issuanceBaseUrl}/${issuerId}/credential`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: '{"format":',
+    })
+
+    expect(response.status).toBe(400)
+    expect(await response.json()).toEqual({
+      error: 'invalid_request',
+      error_description: 'The request body could not be parsed.',
+    })
+  })
+
   it('ends the tenant session after serving signed issuer metadata', async () => {
     const issuerTenant = await issuer.agent.modules.tenants.getTenantAgent({ tenantId: issuer1.tenantId })
     const key = await issuerTenant.kms.createKey({ type: { kty: 'EC', crv: 'P-256' } })

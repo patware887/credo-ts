@@ -6,6 +6,7 @@ import {
   getRequestContext,
   importExpress,
   registerRequestSession,
+  sendBodyParseErrorResponse,
   sendPayloadTooLargeResponse,
 } from '../shared/router'
 import { OpenId4VcIssuerApi } from './OpenId4VcIssuerApi'
@@ -146,7 +147,7 @@ export class OpenId4VcIssuerModule implements Module {
         // End the session first, so an early return below can't skip it
         await endRequestSession(req)
 
-        if (sendPayloadTooLargeResponse(res, error)) return
+        if (sendPayloadTooLargeResponse(res, error) || sendBodyParseErrorResponse(res, error)) return
 
         if (!res.headersSent) {
           agentContext.config.logger.warn(
@@ -225,7 +226,7 @@ export class OpenId4VcIssuerModule implements Module {
         // End the session first, so an early return below can't skip it
         await endRequestSession(req)
 
-        if (sendPayloadTooLargeResponse(res, error)) return
+        if (sendPayloadTooLargeResponse(res, error) || sendBodyParseErrorResponse(res, error)) return
 
         if (!res.headersSent) {
           logger.warn(

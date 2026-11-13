@@ -135,6 +135,19 @@ export function sendPayloadTooLargeResponse(response: Response, error: unknown) 
   return true
 }
 
+/**
+ * Sends a 400 response if the body parser could not parse the request body. Returns whether it did.
+ */
+export function sendBodyParseErrorResponse(response: Response, error: unknown) {
+  if (!(error instanceof Error) || !('type' in error) || error.type !== 'entity.parse.failed') return false
+
+  response.status(400).json({
+    error: 'invalid_request',
+    error_description: 'The request body could not be parsed.',
+  })
+  return true
+}
+
 const requestSessions = new WeakMap<Request, () => Promise<void>>()
 
 /**

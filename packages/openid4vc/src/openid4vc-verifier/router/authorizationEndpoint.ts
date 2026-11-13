@@ -1,9 +1,16 @@
 import { AgentContext, TypedArrayEncoder } from '@credo-ts/core'
-import { decodeJwtHeader, Oauth2ErrorCodes, Oauth2ServerErrorResponseError } from '@openid4vc/oauth2'
+import {
+  decodeJwtHeader,
+  type JwtHeader,
+  Oauth2ErrorCodes,
+  Oauth2JwtParseError,
+  Oauth2ServerErrorResponseError,
+} from '@openid4vc/oauth2'
 // FIXME: export parseOpenid4VpAuthorizationResponsePayload from openid4vp
 import { Openid4vpAuthorizationResponseError, zOpenid4vpAuthorizationResponse } from '@openid4vc/openid4vp'
-import { ValidationError } from '@openid4vc/utils'
+import { JsonParseError, ValidationError } from '@openid4vc/utils'
 import type { NextFunction, Request, Response, Router } from 'express'
+import { ZodError } from 'zod'
 import {
   getRequestContext,
   sendErrorResponse,
@@ -65,7 +72,12 @@ export function configureAuthorizationEndpoint(router: Router, config: OpenId4Vc
       }
 
       // FIXME: should throw a Oauth2ServerErrorResponseError in the oid4vp library
-      if (error instanceof ValidationError) {
+      if (
+        error instanceof ValidationError ||
+        error instanceof JsonParseError ||
+        error instanceof Oauth2JwtParseError ||
+        error instanceof ZodError
+      ) {
         return sendOauth2ErrorResponse(
           response,
           next,
@@ -100,6 +112,18 @@ async function getVerificationSession(
   )
 
   try {
+    if (typeof request.body !== 'object' || request.body === null) {
+      sendErrorResponse(
+        response,
+        next,
+        agentContext.config.logger,
+        400,
+        Oauth2ErrorCodes.InvalidRequest,
+        'Missing authorization response in request body'
+      )
+      return { success: false }
+    }
+
     if (request.query.session) {
       if (typeof request.query.session !== 'string') {
         sendErrorResponse(
@@ -168,10 +192,23 @@ async function getVerificationSession(
     }
 
     // Try extracting apv (request nonce), which is used in encrypted responses (for ISO 18013-7/before draft 24)
-    if (typeof request.body === 'object' && 'response' in request.body) {
-      const { header } = decodeJwtHeader({
-        jwt: request.body.response,
-      })
+    if ('response' in request.body) {
+      let header: JwtHeader
+      try {
+        header = decodeJwtHeader({ jwt: request.body.response }).header
+      } catch (error) {
+        sendErrorResponse(
+          response,
+          next,
+          agentContext.config.logger,
+          400,
+          Oauth2ErrorCodes.InvalidRequest,
+          `Unable to decode header of encrypted JARM response.`,
+          undefined,
+          error instanceof Error ? error : undefined
+        )
+        return { success: false }
+      }
 
       if (!header.apv) {
         sendErrorResponse(
@@ -197,11 +234,20 @@ async function getVerificationSession(
         return { success: false }
       }
 
-      const nonce = TypedArrayEncoder.toUtf8String(TypedArrayEncoder.fromBase64Url(header.apv))
-      const verificationSession = await openId4VcVerificationSessionRepository.findSingleByQuery(agentContext, {
-        nonce,
-        verifierId: verifier.verifierId,
-      })
+      let nonce: string | undefined
+      try {
+        nonce = TypedArrayEncoder.toUtf8String(TypedArrayEncoder.fromBase64Url(header.apv))
+      } catch {
+        // An apv that is not base64url can't belong to a session
+      }
+
+      const verificationSession =
+        nonce !== undefined
+          ? await openId4VcVerificationSessionRepository.findSingleByQuery(agentContext, {
+              nonce,
+              verifierId: verifier.verifierId,
+            })
+          : null
 
       if (!verificationSession) {
         sendErrorResponse(

@@ -28,6 +28,7 @@ import {
   X509Module,
   X509Service,
 } from '@credo-ts/core'
+import type { Jwk } from '@openid4vc/oauth2'
 import express, { type Express } from 'express'
 import nock from 'nock'
 import { filter, firstValueFrom } from 'rxjs'
@@ -764,6 +765,111 @@ pUGCFdfNLQIgHGSa5u5ZqUtCrnMiaEageO71rjzBlov0YUH4+6ELioY=
     // The router must end the session itself, not the fallback after the response
     expect(warnSpy).not.toHaveBeenCalledWith(expect.stringContaining('was not ended by the router'))
     warnSpy.mockRestore()
+  })
+
+  describe('returns 400 for an authorization response that can not be processed', () => {
+    const encode = (value: string) => TypedArrayEncoder.toBase64Url(TypedArrayEncoder.fromUtf8String(value))
+    const formBody = (response: string): RequestInit => ({
+      headers: { 'Content-Type': 'application/x-www-form-urlencoded' },
+      body: new URLSearchParams({ response }).toString(),
+    })
+
+    const expectInvalidRequest = async (url: string, request: RequestInit, errorDescription: string) => {
+      const response = await fetch(url, { method: 'POST', ...request })
+
+      expect(response.status).toBe(400)
+      expect(await response.json()).toMatchObject({
+        error: 'invalid_request',
+        error_description: expect.stringContaining(errorDescription),
+      })
+    }
+
+    it('without a session', async () => {
+      const openIdVerifier = await verifier.agent.openid4vc.verifier.createVerifier()
+      const authorizationEndpoint = `${verificationBaseUrl}/${openIdVerifier.verifierId}/authorize`
+
+      const undecodableHeader = 'Unable to decode header of encrypted JARM response.'
+      const requests: Array<[RequestInit, string]> = [
+        [formBody('not-a-jwt'), undecodableHeader],
+        [formBody(`${encode('not-json')}.payload.signature`), undecodableHeader],
+        [formBody(`${encode('"not-an-object"')}.payload.signature`), undecodableHeader],
+        [
+          formBody(`${encode(JSON.stringify({ alg: 'ECDH-ES', enc: 'A256GCM', apv: '!!!***' }))}.payload.signature`),
+          "Invalid 'apv' parameter",
+        ],
+        [
+          { headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ response: 123 }) },
+          undecodableHeader,
+        ],
+        [
+          { headers: { 'Content-Type': 'application/json' }, body: '{"response":' },
+          'The request body could not be parsed.',
+        ],
+        [{}, 'Missing authorization response in request body'],
+      ]
+      for (const [request, errorDescription] of requests) {
+        await expectInvalidRequest(authorizationEndpoint, request, errorDescription)
+      }
+    })
+
+    it('with a session for an encrypted response', async () => {
+      const openIdVerifier = await verifier.agent.openid4vc.verifier.createVerifier()
+      const encrypt = async (publicJwk: Jwk, payload: string) =>
+        (
+          await getOid4vcCallbacks(verifier.agent.context).encryptJwe(
+            { method: 'jwk', publicJwk, alg: 'ECDH-ES', enc: 'A256GCM' },
+            payload
+          )
+        ).jwe
+
+      const getRequests: Array<[(encryptionJwk: Jwk) => Promise<RequestInit> | RequestInit, string]> = [
+        [
+          (encryptionJwk) =>
+            formBody(
+              [
+                encode(JSON.stringify({ alg: 'RSA-OAEP', enc: 'A256GCM', kid: encryptionJwk.kid })),
+                'encryptedKey',
+                'iv',
+                'ciphertext',
+                'tag',
+              ].join('.')
+            ),
+          'Failed to decrypt the JARM authorization response.',
+        ],
+        [
+          () => formBody([encode('not-json'), 'encryptedKey', 'iv', 'ciphertext', 'tag'].join('.')),
+          'Unable to parse jwt header to JSON',
+        ],
+        [
+          async (encryptionJwk) => formBody(await encrypt(encryptionJwk, 'not-json')),
+          'Unable to parse decrypted JARM JWE body to JSON',
+        ],
+        [async (encryptionJwk) => formBody(await encrypt(encryptionJwk, '[1,2,3]')), 'expected object'],
+        [async (encryptionJwk) => formBody(await encrypt(encryptionJwk, 'null')), 'expected object'],
+        [() => ({}), 'Missing authorization response in request body'],
+      ]
+
+      // A rejected response ends the session, so every request gets its own session
+      for (const [getRequest, errorDescription] of getRequests) {
+        const { verificationSession } = await verifier.agent.openid4vc.verifier.createAuthorizationRequest({
+          verifierId: openIdVerifier.verifierId,
+          responseMode: 'direct_post.jwt',
+          requestSigner: { method: 'none' },
+          dcql: {
+            query: { credentials: [{ id: 'credential', format: 'mso_mdoc', meta: { doctype_value: 'doctype' } }] },
+          },
+          version: 'v1',
+        })
+
+        const { response_uri, client_metadata } = verificationSession.requestPayload
+        const encryptionJwk = client_metadata?.jwks?.keys[0]
+        if (typeof response_uri !== 'string' || !encryptionJwk) {
+          throw new Error('Expected a response_uri and an encryption jwk')
+        }
+
+        await expectInvalidRequest(response_uri, await getRequest(encryptionJwk), errorDescription)
+      }
+    })
   })
 
   it('Invalid verifier attestation in combination with dcql', async () => {

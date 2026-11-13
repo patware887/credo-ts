@@ -332,14 +332,20 @@ export function getOid4vcDecryptJweCallback(agentContext: AgentContext): Decrypt
       }
     }
 
-    if (header.alg !== 'ECDH-ES') {
-      throw new CredoError("Only 'ECDH-ES' is supported as 'alg' value for JARM response decryption")
-    }
-
-    if (header.enc !== 'A256GCM' && header.enc !== 'A128GCM' && header.enc !== 'A128CBC-HS256') {
-      throw new CredoError(
-        "Only 'A256GCM', 'A128GCM', and 'A128CBC-HS256' is supported as 'enc' value for JARM response decryption"
+    // The header is chosen by the sender, so an unsupported value is a failed decryption rather than an error
+    if (
+      header.alg !== 'ECDH-ES' ||
+      (header.enc !== 'A256GCM' && header.enc !== 'A128GCM' && header.enc !== 'A128CBC-HS256')
+    ) {
+      agentContext.config.logger.error(
+        `Unable to decrypt JWE. Only 'ECDH-ES' is supported as 'alg' value and 'A256GCM', 'A128GCM', and 'A128CBC-HS256' as 'enc' value, received alg '${header.alg}' and enc '${header.enc}'`
       )
+      return {
+        decrypted: false,
+        encryptionJwk: options?.jwk,
+        payload: undefined,
+        header,
+      }
     }
 
     let decryptedPayload: string

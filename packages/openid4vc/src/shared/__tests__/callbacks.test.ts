@@ -1,5 +1,5 @@
 import type { AgentContext, KeyDidCreateOptions } from '@credo-ts/core'
-import { Agent, DidKey, JwtPayload, Kms, utils, X509ModuleConfig } from '@credo-ts/core'
+import { Agent, DidKey, JwtPayload, Kms, TypedArrayEncoder, utils, X509ModuleConfig } from '@credo-ts/core'
 import type { Jwk, JwtSigner } from '@openid4vc/oauth2'
 import { decodeJwt } from '@openid4vc/oauth2'
 import { InMemoryWalletModule } from '../../../../../tests/InMemoryWalletModule'
@@ -345,6 +345,24 @@ describe('getOid4vcDecryptJweCallback', () => {
     await expect(getOid4vcDecryptJweCallback(agent.context)(jwe, { jwk: encryptionJwk })).resolves.toMatchObject({
       decrypted: false,
       header: { kid: otherJwk.kid },
+    })
+  })
+
+  test.each([
+    { alg: 'RSA-OAEP', enc: 'A256GCM' },
+    { alg: 'ECDH-ES', enc: 'A192GCM' },
+  ])('does not decrypt a jwe with unsupported alg $alg and enc $enc', async (unsupportedHeader) => {
+    const encryptionJwk = await createEncryptionKey()
+    const [protectedHeader, ...rest] = (await encrypt(encryptionJwk)).split('.')
+    const header = JSON.parse(TypedArrayEncoder.toUtf8String(TypedArrayEncoder.fromBase64Url(protectedHeader)))
+    const jwe = [
+      TypedArrayEncoder.toBase64Url(TypedArrayEncoder.fromUtf8String(JSON.stringify({ ...header, ...unsupportedHeader }))),
+      ...rest,
+    ].join('.')
+
+    await expect(getOid4vcDecryptJweCallback(agent.context)(jwe, { jwk: encryptionJwk })).resolves.toMatchObject({
+      decrypted: false,
+      header: unsupportedHeader,
     })
   })
 })
